@@ -6,10 +6,8 @@ import plotly.express as px
 from scipy.optimize import curve_fit
 from scipy.integrate import solve_ivp
 import base64
-from io import BytesIO
 import plotly.io as pio
 
-# Page configuration with improved title and favicon
 st.set_page_config(
     page_title="Cofit Dashboard",
     page_icon="🧫",
@@ -17,7 +15,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for improved styling
 st.markdown("""
 <style>
     .main-header {
@@ -54,7 +51,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Helper functions
 def read_file(file):
     try:
         if file.name.endswith('.csv'):
@@ -70,14 +66,12 @@ def read_file(file):
         st.error(f"Error reading file: {str(e)}")
         return None
 
-# ODE model solver function for fitting
 def ode_model(t, x0, mu):
     def ode(t, x):
         return mu * x
     sol = solve_ivp(ode, (t[0], t[-1]), [x0], t_eval=t, method='RK45')
     return sol.y[0]
 
-# Function to download dataframe as CSV
 def download_csv(df, filename):
     csv = df.to_csv(index=False)
     b64 = base64.b64encode(csv.encode()).decode()
@@ -90,32 +84,36 @@ def get_svg_download_link(fig, filename):
     href = f'<a href="data:image/svg+xml;base64,{b64}" download="{filename}.svg">Download {filename} as SVG</a>'
     return href
 
-# App header with logo/banner
 st.markdown('<h1 class="main-header">Cofit Dashboard</h1>', unsafe_allow_html=True)
-
-# Main tabbed navigation
 main_tabs = st.tabs(["Data Upload", "Data Analysis", "Model Fitting", "About"])
 
+# ========== Data Upload Tab ==========
 with main_tabs[0]:
     st.markdown('<h2 class="section-header">Upload and Process Data</h2>', unsafe_allow_html=True)
     with st.expander("📋 Instructions", expanded=True):
         st.markdown("""
-        1. Select number of replicate files
-        2. Upload each file (CSV or Excel format)
-        3. Specify the number of species
-        4. Click "Process Data" to continue
+        1. Select number of replicate files  
+        2. Upload each file (CSV or Excel format)  
+        3. **See your raw data displayed under each upload**  
+        4. Specify the number of species  
+        5. Click "Process Data" to continue
         """)
     col1, col2 = st.columns([1, 2])
     with col1:
         num_replicates = st.number_input("Number of replicate files", min_value=1, max_value=10, step=1, key="num_replicates")
     uploaded_files = []
+    dfs = []
     file_cols = st.columns(min(3, int(num_replicates)))
     for i in range(int(num_replicates)):
         with file_cols[i % len(file_cols)]:
             f = st.file_uploader(f"Replicate file {i+1}", type=['csv', 'xls', 'xlsx'], key=f"file_{i}")
             if f is not None:
                 uploaded_files.append(f)
+                df_raw = read_file(f)
                 st.success(f"✅ {f.name}")
+                st.write("⬇️ **Raw data preview:**")
+                st.dataframe(df_raw, use_container_width=True)
+                dfs.append(df_raw)
     file_progress = len(uploaded_files) / int(num_replicates) if int(num_replicates) > 0 else 0
     if file_progress < 1:
         st.progress(file_progress, text=f"Uploaded {len(uploaded_files)} of {int(num_replicates)} files")
@@ -142,56 +140,42 @@ with main_tabs[0]:
             if process_data_button:
                 with st.spinner("Processing data..."):
                     st.session_state.confirmed_species_count_val = species_count_from_form
-                    dfs = []
-                    for f in uploaded_files:
-                        df = read_file(f)
+                    dfs_check = []
+                    for idx, df in enumerate(dfs):
                         if df is None:
-                            st.error(f"Failed to read file {f.name}")
+                            st.error(f"Failed to read file {idx+1}")
                             break
                         min_cols = 1 + species_count_from_form + ((species_count_from_form*(species_count_from_form-1))//2) + 1
                         if df.shape[1] < min_cols:
-                            st.error(f"File {f.name} has fewer columns ({df.shape[1]}) than expected minimum ({min_cols})")
+                            st.error(f"File {idx+1} has fewer columns ({df.shape[1]}) than expected minimum ({min_cols})")
                             break
-                        dfs.append(df)
-                    if len(dfs) == int(num_replicates):
-                        times = [df.iloc[:, 0] for df in dfs]
+                        dfs_check.append(df)
+                    if len(dfs_check) == int(num_replicates):
+                        times = [df.iloc[:, 0] for df in dfs_check]
                         time_ref = times[0]
                         if not all(time_ref.equals(t) for t in times[1:]):
                             st.error("Time columns do not match across all replicate files.")
                         else:
-                            data_arrays = [df.iloc[:, 1:].to_numpy(dtype=float) for df in dfs]
+                            data_arrays = [df.iloc[:, 1:].to_numpy(dtype=float) for df in dfs_check]
                             avg_data = np.mean(data_arrays, axis=0)
                             df_avg = pd.DataFrame(np.hstack([time_ref.values.reshape(-1,1), avg_data]))
-                            
-                            # Calculate expected columns based on species count
                             species_cols = [f"x{i+1}" for i in range(species_count_from_form)]
                             pairwise_cols = []
                             for i in range(species_count_from_form):
                                 for j in range(i+1, species_count_from_form):
                                     pairwise_cols.append(f"x{i+1}+x{j+1}")
                             col_names = ["time"] + species_cols + pairwise_cols + ["background_avg"]
-                              # Check if column count matches before assigning names
                             if len(col_names) != df_avg.shape[1]:
-                                # Calculate the correct species count based on column numbers
                                 total_cols = df_avg.shape[1]
-                                # Solve quadratic equation for species count: s + s*(s-1)/2 + 1 + 1 = total_cols
-                                # This simplifies to: s² + s + 2 - 2*total_cols = 0
-                                # Using quadratic formula: s = (-1 + sqrt(1 + 4*(2*total_cols - 2)))/2
                                 correct_species = int((-1 + np.sqrt(1 + 8*(total_cols - 2))) / 2)
-                                
                                 st.warning(f"""
                                 ⚠️ **Column count mismatch!** 
-                                
                                 The species count you specified ({species_count_from_form}) doesn't match your data structure.
-                                
                                 Based on your data, the correct number of species is likely **{correct_species}**.
-                                
                                 Please try again with {correct_species} species.
                                 """)
-                                # Skip the rest of this block without using 'continue'
                                 st.session_state.confirmed_species_count_val = correct_species                            
                             else:
-                                # Only proceed if column counts match
                                 df_avg.columns = col_names
                                 st.session_state.df_avg = df_avg
                                 st.session_state.species_count = species_count_from_form
@@ -201,6 +185,7 @@ with main_tabs[0]:
                                 st.success("✅ Data processed successfully! Go to the Data Analysis section.")
                                 st.balloons()
 
+# ========== Data Analysis Tab ==========
 with main_tabs[1]:
     if 'df_avg' in st.session_state:
         st.markdown('<h2 class="section-header">Data Analysis</h2>', unsafe_allow_html=True)
@@ -251,7 +236,7 @@ with main_tabs[1]:
                 yaxis_title="Optical Density (OD)",
                 template="plotly_white",
                 height=500,
-                showlegend=True,  # Always show legend
+                showlegend=True,
                 margin=dict(l=10, r=10, t=30, b=10)
             )
             if y_scale == "Logarithmic":
@@ -278,7 +263,7 @@ with main_tabs[1]:
                 yaxis_title="Optical Density (OD)",
                 template="plotly_white",
                 height=500,
-                showlegend=True,  # Always show legend
+                showlegend=True,
                 margin=dict(l=10, r=10, t=30, b=10)
             )
             if y_scale_pair == "Logarithmic":
@@ -290,6 +275,7 @@ with main_tabs[1]:
         st.warning("Please upload and process data first!")
         st.markdown("Go to the **Data Upload** section to get started.")
 
+# ========== Model Fitting Tab ==========
 with main_tabs[2]:
     if 'df_avg' in st.session_state:
         st.markdown('<h2 class="section-header">Model Fitting</h2>', unsafe_allow_html=True)
@@ -344,13 +330,24 @@ with main_tabs[2]:
                     r_squared = 1 - (ss_res / ss_tot)
                     perr = np.sqrt(np.diag(pcov))
                     x0_err, mu_err = perr
+
+                    # Confidence Intervals (95%)
+                    x0_CI_low = x0_fit - 1.96 * x0_err
+                    x0_CI_high = x0_fit + 1.96 * x0_err
+                    mu_CI_low = mu_fit - 1.96 * mu_err
+                    mu_CI_high = mu_fit + 1.96 * mu_err
+
                     fit_results.append({
                         "Species": species, 
                         "Initial Value (x₀)": f"{x0_fit:.4f} ± {x0_err:.4f}",
                         "Growth Rate (μ)": f"{mu_fit:.4f} ± {mu_err:.4f}",
                         "R²": f"{r_squared:.4f}",
                         "x0_val": x0_fit,
-                        "mu_val": mu_fit
+                        "mu_val": mu_fit,
+                        "x0_CI_low": x0_CI_low,
+                        "x0_CI_high": x0_CI_high,
+                        "mu_CI_low": mu_CI_low,
+                        "mu_CI_high": mu_CI_high
                     })
                 except Exception as e:
                     fit_results.append({
@@ -359,48 +356,87 @@ with main_tabs[2]:
                         "Growth Rate (μ)": "Failed", 
                         "R²": "N/A",
                         "x0_val": np.nan,
-                        "mu_val": np.nan
+                        "mu_val": np.nan,
+                        "x0_CI_low": np.nan,
+                        "x0_CI_high": np.nan,
+                        "mu_CI_low": np.nan,
+                        "mu_CI_high": np.nan
                     })
                     st.error(f"Fit failed for {species}: {e}")
             df_fit = pd.DataFrame(fit_results)        
+
         st.subheader("Model Fitting Results")
         fit_tabs = st.tabs(["Parameter Table", "Fitted Curves", "Growth Rate Comparison", "Lotka-Volterra Pairwise"])
         with fit_tabs[0]:
             col1, col2 = st.columns([3, 1])
             with col1:
-                st.subheader("ODE Model Parameters")
+                st.subheader("ODE Model Parameters with 95% Confidence Intervals")
             with col2:
-                st.markdown(download_csv(df_fit[["Species", "Initial Value (x₀)", "Growth Rate (μ)", "R²"]], 
-                                     "fit_parameters"), unsafe_allow_html=True)
-            st.dataframe(df_fit[["Species", "Initial Value (x₀)", "Growth Rate (μ)", "R²"]], use_container_width=True)
+                st.markdown(download_csv(
+                    df_fit[["Species", "Initial Value (x₀)", "Growth Rate (μ)", "R²", "x0_CI_low", "x0_CI_high", "mu_CI_low", "mu_CI_high"]], 
+                    "fit_parameters_with_CI"), unsafe_allow_html=True)
+            st.dataframe(df_fit[[
+                "Species", 
+                "Initial Value (x₀)", "x0_CI_low", "x0_CI_high",
+                "Growth Rate (μ)", "mu_CI_low", "mu_CI_high",
+                "R²"
+            ]], use_container_width=True)
+
         with fit_tabs[1]:
             fig_fit = go.Figure()
             colors = px.colors.qualitative.Bold
             for idx, species in enumerate(species_cols):
+                x0_fit = df_fit.loc[idx, "x0_val"]
+                mu_fit = df_fit.loc[idx, "mu_val"]
+                mu_CI_low = df_fit.loc[idx, "mu_CI_low"]
+                mu_CI_high = df_fit.loc[idx, "mu_CI_high"]
+
+                # Data curve
                 fig_fit.add_trace(go.Scatter(
                     x=time_data_full,
                     y=data_no_time[species],
                     mode='lines',
                     name=f"{species} data",
-                    line=dict(color=colors[idx % len(colors)]),
-                    opacity=0.7
+                    line=dict(color=colors[idx % len(colors)]), opacity=0.7
                 ))
-                if not np.isnan(df_fit.loc[idx, "x0_val"]):
-                    fitted_curve = ode_model(time_data, df_fit.loc[idx, "x0_val"], df_fit.loc[idx, "mu_val"])
+
+                # Fit and confidence bands (if not failed)
+                if not np.isnan(x0_fit) and not np.isnan(mu_fit):
+                    fitted_curve = ode_model(time_data, x0_fit, mu_fit)
+                    fitted_curve_lower = ode_model(time_data, x0_fit, mu_CI_low)
+                    fitted_curve_upper = ode_model(time_data, x0_fit, mu_CI_high)
+                    color_hex = colors[idx % len(colors)]
+                    # Convert hex to rgba for proper opacity handling
+                    if color_hex.startswith('#'):
+                        r = int(color_hex[1:3], 16)
+                        g = int(color_hex[3:5], 16)
+                        b = int(color_hex[5:7], 16)
+                        rgba_color = f'rgba({r},{g},{b},0.2)'
+                    else:
+                        rgba_color = f'rgba(100,100,100,0.2)'
                     fig_fit.add_trace(go.Scatter(
                         x=time_data,
                         y=fitted_curve,
                         mode='lines',
                         name=f"{species} fit",
-                        line=dict(color=colors[idx % len(colors)], dash='dash', width=2)
+                        line=dict(color=color_hex, dash='dash', width=2)
+                    ))
+                    fig_fit.add_trace(go.Scatter(
+                        x=np.concatenate([time_data, time_data[::-1]]),
+                        y=np.concatenate([fitted_curve_lower, fitted_curve_upper[::-1]]),
+                        fill='toself',
+                        fillcolor=rgba_color,
+                        line=dict(color='rgba(255,255,255,0)'),
+                        showlegend=False,
+                        name=f"{species} 95% CI"
                     ))
                     fig_fit.add_vrect(
                         x0=time_min, x1=time_max,
-                        fillcolor="gray", opacity=0.1,
+                        fillcolor="gray", opacity=0.07,
                         layer="below", line_width=0,
                     )
             fig_fit.update_layout(
-                title="Individual Species Data with ODE Fit",
+                title="Individual Species Data with ODE Fit and 95% Confidence Interval",
                 xaxis_title="Time",
                 yaxis_title="Optical Density (OD)",
                 template="plotly_white",
@@ -417,7 +453,8 @@ with main_tabs[2]:
             if log_scale:
                 fig_fit.update_yaxes(type="log")
             st.plotly_chart(fig_fit, use_container_width=True)
-            st.markdown(get_svg_download_link(fig_fit, "fitted_curves"), unsafe_allow_html=True)
+            st.markdown(get_svg_download_link(fig_fit, "fitted_curves_with_CI"), unsafe_allow_html=True)
+
         with fit_tabs[2]:
             growth_rates = [r["mu_val"] for r in fit_results]
             species_names = [r["Species"] for r in fit_results]
@@ -439,25 +476,20 @@ with main_tabs[2]:
             )
             st.plotly_chart(fig_rates, use_container_width=True)            
         st.markdown(get_svg_download_link(fig_rates, "growth_rate_comparison"), unsafe_allow_html=True)
-            
+
         with fit_tabs[3]:
             st.subheader("Lotka-Volterra Pairwise Model")
-            
             st.markdown("""
             ### Lotka-Volterra Model for Species Interactions
-            
             The Lotka-Volterra model for pairwise interactions describes how two species grow and interact with each other. 
             The model captures competitive, cooperative, or predator-prey dynamics between species.
-            
             **General Pairwise Lotka-Volterra Equations:**
             """)
-            
             st.latex(r'''
             \begin{align}
             \frac{dx_i}{dt} &= x_i \left( r_i + \sum_{j=1}^n \alpha_{ij} x_j \right) \\
             \end{align}
             ''')
-            
             st.markdown("""
             Where:
             - $x_i$ is the population density of species $i$
@@ -465,20 +497,16 @@ with main_tabs[2]:
             - $\\alpha_{ij}$ is the interaction coefficient describing the effect of species $j$ on species $i$
                 - $\\alpha_{ii}$ is the self-interaction (density-dependent growth) coefficient
                 - $\\alpha_{ij}$ (when $i \\neq j$) represents competition ($<0$), mutualism ($>0$), or predation
-            
             **For a two-species system:**
             """)
-            
             st.latex(r'''
             \begin{align}
             \frac{dx_1}{dt} &= x_1(r_1 + \alpha_{11}x_1 + \alpha_{12}x_2) \\
             \frac{dx_2}{dt} &= x_2(r_2 + \alpha_{21}x_1 + \alpha_{22}x_2)
             \end{align}
             ''')
-            
             st.markdown("""
             The signs and magnitudes of the interaction coefficients $\\alpha_{12}$ and $\\alpha_{21}$ determine the type of interaction:
-            
             | Interaction Type | $\\alpha_{12}$ | $\\alpha_{21}$ |
             |------------------|---------------|---------------|
             | Competition      | Negative      | Negative      |
@@ -486,15 +514,16 @@ with main_tabs[2]:
             | Predation        | Positive      | Negative      |
             | Commensalism     | Positive      | ≈0            |
             | Amensalism       | Negative      | ≈0            |
-            
             Fitting this model to pairwise co-culture data allows quantification of these interaction strengths.
             """)
-            
             st.info("To fit the Lotka-Volterra model to your data, you'll need both monoculture and co-culture time series. The fitting process involves solving differential equations to estimate the interaction parameters.")
+
+        
     else:
         st.warning("Please upload and process data first!")
         st.markdown("Go to the **Data Upload** section to get started.")
 
+# ========== About Tab ==========
 with main_tabs[3]:
     st.markdown('<h2 class="section-header">About Cofit Dashboard</h2>', unsafe_allow_html=True)
     st.markdown("""
