@@ -508,16 +508,6 @@ with main_tabs[0]:
     st.markdown('<h2 class="section-header">Upload and Process Data</h2>', unsafe_allow_html=True)
     # ...existing code...
 
-    # --- Fill Missing Values Section ---
-    if 'df_avg' in st.session_state and isinstance(st.session_state.get('df_avg'), pd.DataFrame):
-        if 'confirmed_format_config' in st.session_state and st.session_state.get('subtract_bg', False):
-            st.markdown("---")
-            with st.expander("🧩 Fill Missing Values (optional)", expanded=st.session_state.get('interp_expanded', False)):
-                st.markdown("Choose how to handle missing values before fitting and plots. Applied to df_avg.")
-                with st.form("interp_form_global", clear_on_submit=False):
-                    # ...existing code for handling missing values...
-                    pass
-
     with st.expander("📋 Instructions", expanded=True):
         st.markdown("""
         **New Flexible Data Upload Process:**
@@ -1662,84 +1652,86 @@ with main_tabs[0]:
         else:
             st.warning("No data files detected. Please upload files first.")
 
-# --- Global: Fill Missing Values (optional) ---
-if 'df_avg' in st.session_state and isinstance(st.session_state.get('df_avg'), pd.DataFrame):
-    st.markdown("---")
-    with st.expander("🧩 Fill Missing Values (optional)", expanded=st.session_state.get('interp_expanded', False)):
-        st.markdown("Choose how to handle missing values before fitting and plots. Applied to df_avg.")
-        with st.form("interp_form_global", clear_on_submit=False):
-            method = st.selectbox(
-                "Missing data handling",
-                ["None (keep NA)", "Linear", "Spline"],
-                index=st.session_state.get('interp_method_index', 0),
-                help="Linear is robust; Spline can be smoother. None keeps gaps."
-            )
-            col_i1, col_i2, col_i3, col_i4 = st.columns(4)
-            with col_i1:
-                fill_ends = st.selectbox(
-                    "End handling",
-                    ["nearest", "extrapolate"],
-                    index=st.session_state.get('interp_fill_ends_index', 0),
-                    help="How to treat times before first/after last observation"
-                )
-            with col_i2:
-                floor_zero = st.checkbox(
-                    "Clip negatives",
-                    value=st.session_state.get('interp_floor_zero', True),
-                    help="Keeps populations non-negative after interpolation"
-                )
-            with col_i3:
-                min_clip = st.number_input(
-                    "Minimum clip value",
-                    value=float(st.session_state.get('interp_min_clip', 1e-5)),
-                    min_value=0.0,
-                    step=1e-6,
-                    format="%.6f"
-                )
-            with col_i4:
-                exclude_bg = st.checkbox(
-                    "Exclude background",
-                    value=st.session_state.get('interp_exclude_bg', True),
-                    help="Do not alter background_avg"
-                )
-            col_s1, col_s2 = st.columns(2)
-            with col_s1:
-                spline_k = st.slider("Spline order k", 1, 5, st.session_state.get('interp_spline_k', 3), disabled=(method != "Spline"))
-            with col_s2:
-                spline_s = st.number_input("Spline smoothing s", value=float(st.session_state.get('interp_spline_s', 0.0)), step=0.1, disabled=(method != "Spline"))
+        # --- Fill Missing Values Section (only after mapping + background subtraction) ---
+        if 'df_avg' in st.session_state and isinstance(st.session_state.get('df_avg'), pd.DataFrame):
+            if 'confirmed_format_config' in st.session_state and st.session_state.get('subtract_bg', False):
+                st.markdown("---")
+                with st.expander("🧩 Fill Missing Values (optional)", expanded=st.session_state.get('interp_expanded', False)):
+                    st.markdown("Choose how to handle missing values before fitting and plots. Applied to df_avg.")
+                    with st.form("interp_form_upload", clear_on_submit=False):
+                        method = st.selectbox(
+                            "Missing data handling",
+                            ["None (keep NA)", "Linear", "Spline"],
+                            index=st.session_state.get('interp_method_index', 0),
+                            help="Linear is robust; Spline can be smoother. None keeps gaps."
+                        )
+                        col_i1, col_i2, col_i3, col_i4 = st.columns(4)
+                        with col_i1:
+                            fill_ends = st.selectbox(
+                                "End handling",
+                                ["nearest", "extrapolate"],
+                                index=st.session_state.get('interp_fill_ends_index', 0),
+                                help="How to treat times before first/after last observation"
+                            )
+                        with col_i2:
+                            floor_zero = st.checkbox(
+                                "Clip negatives",
+                                value=st.session_state.get('interp_floor_zero', True),
+                                help="Keeps populations non-negative after interpolation"
+                            )
+                        with col_i3:
+                            min_clip = st.number_input(
+                                "Minimum clip value",
+                                value=float(st.session_state.get('interp_min_clip', 1e-5)),
+                                min_value=0.0,
+                                step=1e-6,
+                                format="%.6f"
+                            )
+                        with col_i4:
+                            exclude_bg = st.checkbox(
+                                "Exclude background",
+                                value=st.session_state.get('interp_exclude_bg', True),
+                                help="Do not alter background_avg"
+                            )
+                        col_s1, col_s2 = st.columns(2)
+                        with col_s1:
+                            spline_k = st.slider("Spline order k", 1, 5, st.session_state.get('interp_spline_k', 3), disabled=(method != "Spline"))
+                        with col_s2:
+                            spline_s = st.number_input("Spline smoothing s", value=float(st.session_state.get('interp_spline_s', 0.0)), step=0.1, disabled=(method != "Spline"))
 
-            submitted = st.form_submit_button("Apply interpolation", use_container_width=False)
-            if submitted:
-                st.session_state.interp_expanded = True
-                st.session_state.interp_method_index = ["None (keep NA)", "Linear", "Spline"].index(method)
-                st.session_state.interp_fill_ends_index = ["nearest", "extrapolate"].index(fill_ends)
-                st.session_state.interp_floor_zero = bool(floor_zero)
-                st.session_state.interp_exclude_bg = bool(exclude_bg)
-                st.session_state.interp_spline_k = int(spline_k)
-                st.session_state.interp_spline_s = float(spline_s)
-                st.session_state.interp_min_clip = float(min_clip)
+                        submitted = st.form_submit_button("Apply interpolation", use_container_width=False)
+                        if submitted:
+                            st.session_state.interp_expanded = True
+                            st.session_state.interp_method_index = ["None (keep NA)", "Linear", "Spline"].index(method)
+                            st.session_state.interp_fill_ends_index = ["nearest", "extrapolate"].index(fill_ends)
+                            st.session_state.interp_floor_zero = bool(floor_zero)
+                            st.session_state.interp_exclude_bg = bool(exclude_bg)
+                            st.session_state.interp_spline_k = int(spline_k)
+                            st.session_state.interp_spline_s = float(spline_s)
+                            st.session_state.interp_min_clip = float(min_clip)
 
-                if method == "None (keep NA)":
-                    st.info("Kept NA values unchanged.")
-                else:
-                    exclude_cols = {"background_avg"} if exclude_bg else set()
-                    df_interp, n_filled, per_col = interpolate_missing_df(
-                        st.session_state.df_avg,
-                        method=("spline" if method == "Spline" else "linear"),
-                        fill_ends=fill_ends,
-                        spline_k=int(spline_k),
-                        spline_s=float(spline_s),
-                        floor_zero=bool(floor_zero),
-                        min_clip=float(min_clip),
-                        exclude_cols=exclude_cols
-                    )
-                    st.session_state.df_avg = df_interp
-                    st.success(f"✅ Filled {n_filled} missing values across {sum(1 for v in per_col.values() if v>0)} columns.")
-                    still_na = df_interp.columns[df_interp.isna().any()].tolist()
-                    if still_na:
-                        st.warning("Some columns still contain NA (insufficient finite points). Left unchanged:")
-                        st.write(", ".join(still_na))
-                    st.dataframe(df_interp.head(), use_container_width=True)
+                            if method == "None (keep NA)":
+                                st.info("Kept NA values unchanged.")
+                            else:
+                                exclude_cols = {"background_avg"} if exclude_bg else set()
+                                df_interp, n_filled, per_col = interpolate_missing_df(
+                                    st.session_state.df_avg,
+                                    method=("spline" if method == "Spline" else "linear"),
+                                    fill_ends=fill_ends,
+                                    spline_k=int(spline_k),
+                                    spline_s=float(spline_s),
+                                    floor_zero=bool(floor_zero),
+                                    min_clip=float(min_clip),
+                                    exclude_cols=exclude_cols
+                                )
+                                st.session_state.df_avg = df_interp
+                                st.success(f"✅ Filled {n_filled} missing values across {sum(1 for v in per_col.values() if v>0)} columns.")
+                                still_na = df_interp.columns[df_interp.isna().any()].tolist()
+                                if still_na:
+                                    st.warning("Some columns still contain NA (insufficient finite points). Left unchanged:")
+                                    st.write(", ".join(still_na))
+                                st.dataframe(df_interp.head(), use_container_width=True)
+## (Removed global Fill Missing Values block; interpolation UI lives in Upload tab only)
 
 # ========== Data Analysis Tab ==========
 with main_tabs[1]:
